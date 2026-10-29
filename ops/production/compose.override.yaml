@@ -1,0 +1,139 @@
+# Isolated PRODUCTION overlay: no public API. Use ONLY with the root Compose file.
+name: mad4b-firecrawl-production
+
+services:
+  api:
+    # !reset is intentional: root Compose otherwise publishes 0.0.0.0:3002.
+    ports: !reset []
+    extra_hosts: !reset []
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${FIRECRAWL_PRODUCTION_POSTGRES_PASSWORD:?Set a unique production-only secret}
+      USE_DB_AUTHENTICATION: "false"
+      NUM_WORKERS_PER_QUEUE: "1"
+      MAX_CONCURRENT_JOBS: "1"
+      CRAWL_CONCURRENT_REQUESTS: "2"
+      BROWSER_POOL_SIZE: "1"
+      ENV: production
+      ALLOW_LOCAL_WEBHOOKS: "False"
+      OPENAI_API_KEY: ""
+      OPENAI_BASE_URL: ""
+      OLLAMA_BASE_URL: ""
+      AUTUMN_SECRET_KEY: ""
+      SLACK_WEBHOOK_URL: ""
+      BULL_AUTH_KEY: ""
+      TEST_API_KEY: ""
+      SUPABASE_ANON_TOKEN: ""
+      SUPABASE_URL: ""
+      SUPABASE_SERVICE_TOKEN: ""
+      SELF_HOSTED_WEBHOOK_URL: ""
+      PROXY_SERVER: ""
+      PROXY_USERNAME: ""
+      PROXY_PASSWORD: ""
+      SEARXNG_ENDPOINT: ""
+      ADMIN_INTERNAL_PORT: ""
+    networks:
+      - backend
+      - egress
+      - frontdoor
+    cpus: 2.0
+    mem_limit: 4g
+    memswap_limit: 4g
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  playwright-service:
+    environment:
+      ALLOW_LOCAL_WEBHOOKS: "False"
+      MAX_CONCURRENT_PAGES: "2"
+      PROXY_SERVER: ""
+      PROXY_USERNAME: ""
+      PROXY_PASSWORD: ""
+    networks:
+      - backend
+      - egress
+    cpus: 1.5
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 512
+    restart: unless-stopped
+
+  nuq-postgres:
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${FIRECRAWL_PRODUCTION_POSTGRES_PASSWORD:?Set a unique production-only secret}
+    volumes:
+      - nuq-data:/var/lib/postgresql/data
+    cpus: 0.75
+    mem_limit: 1g
+    memswap_limit: 1g
+    restart: unless-stopped
+
+  redis:
+    command: redis-server --bind 0.0.0.0 --appendonly yes
+    volumes:
+      - redis-data:/data
+    cpus: 0.4
+    mem_limit: 256m
+    memswap_limit: 256m
+    restart: unless-stopped
+
+  rabbitmq:
+    volumes:
+      - rabbit-data:/var/lib/rabbitmq
+    cpus: 0.65
+    mem_limit: 768m
+    memswap_limit: 768m
+    restart: unless-stopped
+
+  # FoundationDB is experimental; never start as default in production.
+  foundationdb:
+    profiles: [foundationdb-experimental]
+  foundationdb-init:
+    profiles: [foundationdb-experimental]
+
+  gateway:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:${FIRECRAWL_PRODUCTION_LOCAL_PORT:-13082}:8080"
+    volumes:
+      - ${FIRECRAWL_PRODUCTION_NGINX_CONFIG:?Provide production gateway config}:/etc/nginx/conf.d/default.conf:ro
+      - ${FIRECRAWL_PRODUCTION_HTPASSWD:?Provide production htpasswd file}:/etc/nginx/auth/.htpasswd:ro
+    networks:
+      - frontdoor
+    depends_on:
+      api:
+        condition: service_started
+    cpus: 0.2
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/__healthcheck"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+networks:
+  frontdoor:
+    internal: true
+  backend:
+    internal: true
+  egress:
+    driver: bridge
+
+volumes:
+  nuq-data:
+  redis-data:
+  rabbit-data:
