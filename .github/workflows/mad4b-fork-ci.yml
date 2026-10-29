@@ -112,3 +112,20 @@ jobs:
       - name: TypeScript build
         working-directory: apps/api
         run: pnpm run build
+
+  api-security-audit:
+    name: API dependency vulnerability audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4
+        with:
+          version: 11.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      - name: Fail closed on active advisory paths
+        run: pnpm dlx audit-ci@^7 --directory apps/api --config apps/api/audit-ci.jsonc

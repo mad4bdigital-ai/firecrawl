@@ -37,7 +37,8 @@ jobs:
         working-directory: ./apps/js-sdk/firecrawl
 
   test:
-    name: Run tests
+    name: Upstream private-network integration (not self-host CI)
+    if: github.repository == 'firecrawl/firecrawl'
     runs-on: ubuntu-24.04
     env:
       IDMUX_URL: ${{ secrets.IDMUX_URL }}
