@@ -30,6 +30,7 @@ jobs:
         run: |
           python3 -m py_compile scripts/ci/verify_production_compose.py ops/production/firecrawl-watch.py ops/production/auth-load-smoke.py
           python3 ops/production/firecrawl-watch.py --self-test
+          grep -Fq 'OnFailure=mad4b-alert-handler@%n.service' ops/production/mad4b-firecrawl-watch.service
           docker compose -f docker-compose.yaml -f ops/production/compose.override.yaml config --format json |
             python3 scripts/ci/verify_production_compose.py
           grep -q 'auth_basic_user_file' ops/production/nginx.conf
