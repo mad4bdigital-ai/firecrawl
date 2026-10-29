@@ -25,6 +25,8 @@ Host `srv2030908`: 31 GiB RAM, approximately 17 GiB available, **4 GiB of 4 GiB 
 1. Use a separate checkout under a staging-owned directory with `git fetch` and checkout the exact reviewed, tested commit. Do not change existing Coolify projects or Docker networks.
 2. Provision a staging-only secret in a **non-versioned, owner-readable local file**, e.g. `/opt/mad4b/firecrawl-staging/.env.staging` (mode 0600), containing `FIRECRAWL_STAGING_POSTGRES_PASSWORD=<strong-unique-generated-secret>`. Never print or commit the secret. Do not reuse production DB credentials.
 3. Check current swap/memory/disk, container count and port exposure again. Abort launch if the VPS has developed memory pressure, low disk, or uncontrolled container restarts. Ensure staging's build memory budget will not harm production.
+
+   Use the supplied read-only gate: `bash ops/staging/preflight.sh`. The October 29 host snapshot (swap almost completely occupied) is expected to return **NO-GO** until capacity is re-evaluated. Never disable the check simply to get a green build.
 4. Run this **read-only Compose config preflight** from the checkout, substituting the local env file path:
 
 ```bash
