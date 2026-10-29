@@ -1,5 +1,7 @@
 [Unit]
 Description=MAD4B Firecrawl isolated production watchdog
+# Route failures to existing 15m-deduplicated SMTP dispatcher.
+OnFailure=mad4b-alert-handler@%n.service
 Wants=network-online.target
 After=network-online.target docker.service
 ConditionPathExists=/opt/mad4b/firecrawl-production/source/ops/production/firecrawl-watch.py
