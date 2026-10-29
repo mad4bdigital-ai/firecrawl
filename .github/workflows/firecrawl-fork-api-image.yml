@@ -1,0 +1,60 @@
+name: Build and attest fork Firecrawl API image
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/firecrawl-fork-api-image.yml"
+      - "apps/api/**"
+      - "ops/production/**"
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: fork-firecrawl-api-ghcr
+  cancel-in-progress: false
+jobs:
+  build-api-amd64:
+    if: github.repository == 'mad4bdigital-ai/firecrawl' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact repository commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Prepare Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Authenticate to fork GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Linux AMD64 API
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/api
+          file: ./apps/api/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/mad4bdigital-ai/firecrawl-api:sha-${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+      - name: Verify source SHA in image
+        env:
+          IMAGE: ghcr.io/mad4bdigital-ai/firecrawl-api:sha-${{ github.sha }}
+          EXPECTED: ${{ github.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE}"
+          got="$(docker run --rm --entrypoint node "${IMAGE}" -p 'process.env.FIRECRAWL_BUILD_SHA')"
+          test "$got" = "${EXPECTED}"
+          docker run --rm --entrypoint node "${IMAGE}" -e 'const fs=require("fs");for(const f of ["dist/src/harness.js","dist/src/controllers/v0/crawl-status.js","BUILD_SHA"]){if(!fs.statSync(f).size)throw new Error("missing build artifact")}'
+          echo "Verified source SHA: $got"
+          echo "Published image digest: ${DIGEST}"

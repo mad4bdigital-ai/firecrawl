@@ -1,0 +1,35 @@
+name: Firecrawl isolated production Compose contract
+on:
+  pull_request:
+    paths:
+      - "ops/production/**"
+      - "scripts/ci/verify_production_compose.py"
+      - ".github/workflows/firecrawl-production-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ops/production/**"
+      - "scripts/ci/verify_production_compose.py"
+      - ".github/workflows/firecrawl-production-contract.yml"
+permissions:
+  contents: read
+jobs:
+  production-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Test production compose access controls
+        env:
+          FIRECRAWL_PRODUCTION_POSTGRES_PASSWORD: ci-unique-production-placeholder-not-real
+          FIRECRAWL_PRODUCTION_NGINX_CONFIG: /tmp/firecrawl-production-nginx.conf
+          FIRECRAWL_PRODUCTION_HTPASSWD: /tmp/firecrawl-production-htpasswd
+          FIRECRAWL_PRODUCTION_API_SHA: '1111111111111111111111111111111111111111'
+        run: |
+          python3 -m py_compile scripts/ci/verify_production_compose.py
+          docker compose -f docker-compose.yaml -f ops/production/compose.override.yaml config --format json |
+            python3 scripts/ci/verify_production_compose.py
+          grep -q 'auth_basic_user_file' ops/production/nginx.conf
+          ! grep -q -E 'password.*postgres' ops/production/compose.override.yaml
