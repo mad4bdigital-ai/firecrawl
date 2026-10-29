@@ -1,0 +1,35 @@
+name: Firecrawl Staging Compose Contract
+
+on:
+  pull_request:
+    paths:
+      - "docker-compose.yaml"
+      - "ops/staging/**"
+      - "scripts/ci/verify_staging_compose.py"
+      - ".github/workflows/firecrawl-staging-compose-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.yaml"
+      - "ops/staging/**"
+      - "scripts/ci/verify_staging_compose.py"
+      - ".github/workflows/firecrawl-staging-compose-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  staging-compose-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Validate merged Compose file without running containers
+        env:
+          FIRECRAWL_STAGING_POSTGRES_PASSWORD: ci-not-a-real-password
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yaml -f ops/staging/compose.override.yaml config --format json \
+            | python3 scripts/ci/verify_staging_compose.py
