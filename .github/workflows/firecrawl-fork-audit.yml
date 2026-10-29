@@ -1,0 +1,63 @@
+name: Firecrawl Fork Research (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      compare_offset:
+        description: "Offset into discovery-ranked fork inventory"
+        required: false
+        type: number
+        default: 0
+      compare_limit:
+        description: "Number of fork HEADs to compare in this batch"
+        required: false
+        type: number
+        default: 150
+  pull_request:
+    paths:
+      - "scripts/research/firecrawl_forks_audit.py"
+      - ".github/workflows/firecrawl-fork-audit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-research-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    name: Inventory upstream forks
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python syntax check
+        run: python -m py_compile scripts/research/firecrawl_forks_audit.py
+      - name: Enumerate forks and compare selected heads
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORK_OFFSET: ${{ inputs.compare_offset || 0 }}
+          FORK_LIMIT: ${{ inputs.compare_limit || 150 }}
+        run: |
+          python scripts/research/firecrawl_forks_audit.py \
+            --out fork-audit-results \
+            --compare-offset "$FORK_OFFSET" \
+            --compare-limit "$FORK_LIMIT"
+      - name: Publish evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firecrawl-fork-audit-${{ github.run_id }}
+          path: |
+            fork-audit-results/forks.json
+            fork-audit-results/forks.csv
+            fork-audit-results/comparisons.json
+            fork-audit-results/comparisons.csv
+            fork-audit-results/progress.json
+            fork-audit-results/summary.md
+          if-no-files-found: warn
+          retention-days: 14
