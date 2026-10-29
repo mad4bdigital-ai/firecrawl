@@ -13,7 +13,7 @@ permissions: {}
 jobs:
   publish:
     name: Publish to RubyGems
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'firecrawl/firecrawl' && (github.ref == 'refs/heads/main')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     environment: release
     permissions:

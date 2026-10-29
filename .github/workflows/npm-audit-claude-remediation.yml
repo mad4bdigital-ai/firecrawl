@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   scan:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure' }}
+    if: ${{ github.repository == 'firecrawl/firecrawl' && ( github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure' ) }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -51,7 +51,7 @@ jobs:
 
   remediate:
     needs: scan
-    if: ${{ needs.scan.outputs.has_uncovered == 'true' }}
+    if: ${{ github.repository == 'firecrawl/firecrawl' && ( needs.scan.outputs.has_uncovered == 'true' ) }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 60
     concurrency:

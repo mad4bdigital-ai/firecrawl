@@ -14,7 +14,7 @@ permissions:
 jobs:
   unit:
     name: Unit tests
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -38,7 +38,7 @@ jobs:
 
   test:
     name: Run tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     env:
       IDMUX_URL: ${{ secrets.IDMUX_URL }}
     steps:
