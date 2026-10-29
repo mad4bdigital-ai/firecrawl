@@ -87,12 +87,14 @@ def collect(out, token, max_pages):
     progress = out / "progress.json"
     rows = json.loads(store.read_text(encoding="utf-8")) if store.exists() else []
     state = json.loads(progress.read_text(encoding="utf-8")) if progress.exists() else {}
+    if state and state.get("paging_scheme") != "oldest-v2":
+        raise RuntimeError("Old fork pagination checkpoint is unsafe; choose a new --out directory")
     current = int(state.get("next_page", 1))
     complete = bool(state.get("complete", False))
     seen = {row["name"] for row in rows}
     run_pages = 0
     while not complete and (max_pages == 0 or run_pages < max_pages):
-        repos = gh(f"/repos/{UPSTREAM}/forks?sort=stargazers&per_page=100&page={current}", token)
+        repos = gh(f"/repos/{UPSTREAM}/forks?sort=oldest&per_page=100&page={current}", token)
         if not isinstance(repos, list):
             raise ValueError("Unexpected forks payload")
         for repo in repos:
@@ -103,9 +105,23 @@ def collect(out, token, max_pages):
         current += 1
         run_pages += 1
         save_json(store, rows)
-        save_json(progress, {"complete": complete, "next_page": current, "count": len(rows)})
-        print(f"Forks page {current-1}: {len(repos)}; total {len(rows)}; complete={complete}", flush=True)
-    return rows, complete
+        save_json(progress, {"paging_scheme": "oldest-v2", "complete": complete,
+                             "next_page": current, "count": len(rows)})
+        print(f"Forks page {current-1}: {len(repos)}; unique {len(rows)}; pagination_complete={complete}", flush=True)
+    # GitHub may list fewer accessible forks than the repository metadata count.
+    # Never claim full coverage when pagination yields far fewer unique repositories.
+    upstream = gh(f"/repos/{UPSTREAM}", token)
+    expected = int(upstream.get("forks_count") or 0)
+    fraction = len(rows) / expected if expected else None
+    coverage_ok = bool(complete and (not expected or fraction >= 0.98))
+    save_json(progress, {"paging_scheme": "oldest-v2", "complete": coverage_ok,
+                         "pagination_exhausted": complete, "next_page": current,
+                         "count": len(rows), "upstream_reported_forks": expected,
+                         "coverage_fraction": fraction})
+    if complete and not coverage_ok:
+        print(f"WARNING: GitHub reports {expected} forks but only {len(rows)} "
+              f"unique repositories were returned; audit is INCOMPLETE", file=sys.stderr)
+    return rows, coverage_ok
 
 def datetime_score(value):
     try:
@@ -197,6 +213,8 @@ def main():
     (out / "summary.md").write_text("\n".join(report) + "\n", encoding="utf-8")
     print(f"Inventory complete={complete}, forks={len(forks)}, "
           f"comparisons={len(comparisons)}, divergent={len(divergent)}", flush=True)
+    if not complete:
+        sys.exit("INCOMPLETE fork census: reconcile upstream fork count before acceptance")
 
 if __name__ == "__main__":
     main()
