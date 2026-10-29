@@ -66,3 +66,5 @@ apps/api/src/lib/scrape-interact/*.md
 vitest.out
 
 tmp/
+# Private credentials for isolated Firecrawl staging
+/ops/staging/.env.staging
