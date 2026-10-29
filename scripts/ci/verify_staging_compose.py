@@ -67,8 +67,11 @@ for name, target in [("nuq-postgres", "/var/lib/postgresql/data"),
     if not any(v.get("type") == "volume" and v.get("target") == target for v in mounts):
         fail(f"{name} lacks staging-only persistent data volume {target}")
 
+# Compose correctly excludes inactive-profile services from resolved JSON.
+# If a FoundationDB service is included by an explicit profile, it must
+# retain the experimental profile marker; absent is the safe default.
 for name in ("foundationdb", "foundationdb-init"):
-    if "foundationdb-experimental" not in services.get(name, {}).get("profiles", []):
+    if name in services and "foundationdb-experimental" not in services[name].get("profiles", []):
         fail(f"{name} must not start in default staging profile")
 
 print("PASS: no published ports, private data network, bounded resources, "
