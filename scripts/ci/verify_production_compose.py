@@ -17,6 +17,9 @@ for name in ("api","playwright-service","nuq-postgres","redis","rabbitmq","gatew
     if name != "gateway":
         gate(not x.get("ports"),"direct port publishing "+name)
 gate(svc["api"].get("environment",{}).get("ENV")=="production","API not production mode")
+import re
+gate(not svc["api"].get("build"), "production API must not build on shared VPS")
+gate(bool(re.fullmatch(r"ghcr\.io/mad4bdigital-ai/firecrawl-api:sha-[a-f0-9]{40}",svc["api"].get("image",""))),"API image must pin fork GHCR exact source SHA")
 gate(svc["api"].get("environment",{}).get("USE_DB_AUTHENTICATION") in ("false", False),"unexpected auth mode")
 gate(svc["api"].get("environment",{}).get("ALLOW_LOCAL_WEBHOOKS","").lower()=="false","SSRF guard missing")
 gate(not svc["api"].get("extra_hosts"),"host-gateway alias inherited")
