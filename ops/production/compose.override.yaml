@@ -3,6 +3,10 @@ name: mad4b-firecrawl-production
 
 services:
   api:
+    # Production API comes from exact fork GHCR SHA; never build heavy code on shared VPS.
+    build: !reset null
+    image: ghcr.io/mad4bdigital-ai/firecrawl-api:sha-${FIRECRAWL_PRODUCTION_API_SHA:?Set exact 40-character source SHA}
+    pull_policy: always
     # !reset is intentional: root Compose otherwise publishes 0.0.0.0:3002.
     ports: !reset []
     extra_hosts: !reset []
