@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch Firecrawl internal production every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20s
+Persistent=true
+Unit=mad4b-firecrawl-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -25,3 +25,21 @@ The API is intentionally NOT built on the shared VPS. GitHub Actions workflow `.
 6. For rollback, use same project and files `docker compose ... stop`, or pin old code and rebuild. NEVER `down --volumes`, system-wide prune, or change Coolify routing.
 
 The service is useful internally on the VPS. Public access and a custom domain require a separately secured ingress configuration and associated tests.
+
+## Internal consumers and operational monitoring
+
+Firecrawl is **not** published on a public domain. Host-native clients may use the loopback-only authenticated `http://127.0.0.1:13082`; off-host clients must connect using an encrypted SSH tunnel or a separately reviewed TLS/OAuth gateway. Never send Basic credentials over an untrusted link.
+
+Docker clients may join the isolated `mad4b-firecrawl-production_consumers` bridge, which contains the **gateway only**. Never join the `frontdoor`, `backend`, or `egress` networks. Once a consumer is separately approved, attach only its application container using `docker network connect mad4b-firecrawl-production_consumers <approved-client-container>`. Use `http://gateway:8080/v1/scrape` with HTTP Basic auth stored in the consumer's secrets store. Joining a container to this network is a separate security-affecting operator action: no client is automatically authorized or attached. Production identity and access mapping must be reviewed first. Individual consumer accounts must be provisioned with unique, revocable credentials; do not distribute the owner-only bootstrap credential.
+
+To check the gateway authentication boundary and run a bounded functional load test without exposing production credentials:
+
+```sh
+python3 ops/production/auth-load-smoke.py --requests 4 --concurrency 2
+```
+
+The smoke script temporarily installs a random test identity in the existing root-protected htpasswd file, sends requests through the real gateway, and removes that identity in a `finally` block. It never prints passwords and accepts a maximum of 8 requests at 2 concurrent jobs. Run only from the VPS itself; avoid peak traffic.
+
+Monitoring is fail-visible and read-only. After an exact-SHA release, install the two systemd units from this directory to `/etc/systemd/system/`, run `systemctl daemon-reload`, `systemctl enable --now mad4b-firecrawl-watch.timer`, then `systemctl start mad4b-firecrawl-watch.service`. Every 5 minutes the watcher records a sanitized result in the journal and `/var/lib/mad4b-firecrawl-monitor/status.json`. It checks all six services, internal API readiness, gateway 200/401 behavior, RAM/Swap/disk reserves, and service health. Failures exit nonzero. This is **local monitoring only**, not an external notification channel or a long-running soak test. Do not configure external alert forwarding without separately approved routing.
+
+Do not use `docker network connect` on database or raw-API containers; keep Production ingress private. A successful gateway test does not imply that any particular MAD4B application has already been integrated.
