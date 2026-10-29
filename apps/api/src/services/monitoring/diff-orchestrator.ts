@@ -13,6 +13,7 @@ import {
   formatsRequestJsonExtraction,
 } from "./diff";
 import { judgeChange } from "./judgeChange";
+import type { LlmUsageLabels } from "./search/tuning";
 
 type MonitorPageDiffStatus = "same" | "new" | "changed" | "error";
 
@@ -172,6 +173,7 @@ export async function computeAndPersistPageDiff(params: {
                 diffText: markdownSidecar.text,
               }
             : undefined,
+          labels: { teamId, monitorId, monitorCheckId: checkId },
         })
       : undefined;
     return {
@@ -235,6 +237,7 @@ export async function computeAndPersistPageDiff(params: {
         markdownDiff: {
           diffText: diff.text,
         },
+        labels: { teamId, monitorId, monitorCheckId: checkId },
       })
     : undefined;
   return {
@@ -254,6 +257,7 @@ async function runJudge(args: {
   markdownDiff?: {
     diffText?: string;
   };
+  labels: LlmUsageLabels;
 }): Promise<Judgment | undefined> {
   try {
     return await judgeChange({
@@ -262,6 +266,10 @@ async function runJudge(args: {
       extractionPrompt: args.extractionPrompt ?? undefined,
       jsonDiff: args.jsonDiff,
       markdownDiff: args.markdownDiff,
+      labels: args.labels,
+      // Monitors are refused for zero data retention teams and their scrapes
+      // run with ZDR off, so the judge call is traced like them.
+      zeroDataRetention: false,
     });
   } catch (error) {
     rootLogger.error("Judge call failed", { error });

@@ -1,11 +1,27 @@
-import { removeDefaultProperty } from "./llmExtract";
+import { vi } from "vitest";
+
+vi.mock("../lib/extractSmartScrape", async importOriginal => {
+  const actual =
+    await importOriginal<typeof import("../lib/extractSmartScrape")>();
+  return {
+    ...actual,
+    extractData: vi.fn(async () => ({
+      extractedDataArray: [],
+      warning: undefined,
+      costLimitExceededTokenUsage: null,
+    })),
+  };
+});
+import { performLLMExtract, removeDefaultProperty } from "./llmExtract";
+import { extractData } from "../lib/extractSmartScrape";
 import { trimToTokenLimit } from "./llmExtract";
 import { performSummary } from "./llmExtract";
 import { performCleanContent } from "./llmExtract";
 import { encoding_for_model } from "@dqbd/tiktoken";
+import type { Mock } from "vitest";
 
-jest.mock("@dqbd/tiktoken", () => ({
-  encoding_for_model: jest.fn(),
+vi.mock("@dqbd/tiktoken", () => ({
+  encoding_for_model: vi.fn(),
 }));
 
 describe("removeDefaultProperty", () => {
@@ -53,9 +69,12 @@ describe("trimToTokenLimit", () => {
   // correctness (and the event-loop-freeze regression it guards against) depends on
   // the real encode -> slice -> decode round-trip, which a hand-rolled mock cannot
   // model faithfully.
-  const { encoding_for_model: realEncodingForModel } = jest.requireActual(
-    "@dqbd/tiktoken",
-  ) as typeof import("@dqbd/tiktoken");
+  let realEncodingForModel: typeof import("@dqbd/tiktoken").encoding_for_model;
+
+  beforeAll(async () => {
+    ({ encoding_for_model: realEncodingForModel } =
+      await vi.importActual<typeof import("@dqbd/tiktoken")>("@dqbd/tiktoken"));
+  });
 
   // Records the length of every string handed to encode(), so we can prove the
   // synchronous tokenizer never has to chew through an unbounded input.
@@ -63,10 +82,10 @@ describe("trimToTokenLimit", () => {
   let freeCalls: number;
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     encodeInputLengths = [];
     freeCalls = 0;
-    (encoding_for_model as jest.Mock).mockImplementation((model: any) => {
+    (encoding_for_model as Mock).mockImplementation((model: any) => {
       const encoder = realEncodingForModel(model);
       const realEncode = encoder.encode.bind(encoder);
       const realFree = encoder.free.bind(encoder);
@@ -143,7 +162,7 @@ describe("trimToTokenLimit", () => {
 
   it("should use fallback approach when encoder initialization throws", () => {
     const text = "This is some text to test fallback";
-    (encoding_for_model as jest.Mock).mockImplementationOnce(() => {
+    (encoding_for_model as Mock).mockImplementationOnce(() => {
       throw new Error("Encoder error");
     });
 
@@ -196,8 +215,8 @@ describe("performSummary", () => {
       options: { formats: [{ type: "summary" }] },
       internalOptions: { zeroDataRetention: false, teamId: "test-team" },
       logger: {
-        child: jest.fn(() => ({
-          info: jest.fn(),
+        child: vi.fn(() => ({
+          info: vi.fn(),
         })),
       },
       costTracking: {},
@@ -221,8 +240,8 @@ describe("performSummary", () => {
       options: { formats: [{ type: "summary" }] },
       internalOptions: { zeroDataRetention: false, teamId: "test-team" },
       logger: {
-        child: jest.fn(() => ({
-          info: jest.fn(),
+        child: vi.fn(() => ({
+          info: vi.fn(),
         })),
       },
       costTracking: {},
@@ -243,16 +262,16 @@ describe("performSummary", () => {
 });
 
 describe("performCleanContent", () => {
-  const mockEncode = jest.fn();
-  const mockFree = jest.fn();
+  const mockEncode = vi.fn();
+  const mockFree = vi.fn();
   const mockEncoder = {
     encode: mockEncode,
     free: mockFree,
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    (encoding_for_model as jest.Mock).mockReturnValue(mockEncoder);
+    vi.clearAllMocks();
+    (encoding_for_model as Mock).mockReturnValue(mockEncoder);
   });
 
   const makeMeta = (onlyCleanContent: boolean) =>
@@ -260,8 +279,8 @@ describe("performCleanContent", () => {
       options: { onlyCleanContent },
       internalOptions: { zeroDataRetention: false, teamId: "test-team" },
       logger: {
-        child: jest.fn(() => ({ info: jest.fn() })),
-        info: jest.fn(),
+        child: vi.fn(() => ({ info: vi.fn() })),
+        info: vi.fn(),
       },
       costTracking: {},
       id: "test-id",
@@ -292,15 +311,15 @@ describe("performCleanContent", () => {
 
     // Track whether logger.child was called with the generateCompletions method,
     // which only happens after the guard passes (line 1180 in llmExtract.ts).
-    const childLogger = { info: jest.fn(), error: jest.fn(), warn: jest.fn() };
-    const loggerChild = jest.fn(() => childLogger);
+    const childLogger = { info: vi.fn(), error: vi.fn(), warn: vi.fn() };
+    const loggerChild = vi.fn(() => childLogger);
     const meta = {
       options: { onlyCleanContent: true },
       internalOptions: { zeroDataRetention: false, teamId: "test-team" },
       logger: {
         child: loggerChild,
-        info: jest.fn(),
-        error: jest.fn(),
+        info: vi.fn(),
+        error: vi.fn(),
       },
       costTracking: {},
       id: "test-id",
@@ -332,5 +351,134 @@ describe("performCleanContent", () => {
 
     expect(result.markdown).toBe("Some content");
     expect(result.warning).toBeUndefined();
+  });
+});
+
+function makeJsonMeta(internalOptions: Record<string, unknown> = {}) {
+  return {
+    options: {
+      formats: [
+        {
+          type: "json",
+          schema: {
+            type: "object",
+            properties: { rows: { type: "array" } },
+          },
+        },
+      ],
+    },
+    internalOptions: {
+      zeroDataRetention: false,
+      teamId: "test-team",
+      ...internalOptions,
+    },
+    logger: {
+      child: vi.fn(() => ({
+        info: vi.fn(),
+        debug: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      })),
+      debug: vi.fn(),
+      info: vi.fn(),
+    },
+    costTracking: {},
+    id: "test-id",
+    url: "https://example.com",
+  } as any;
+}
+
+describe("performLLMExtract telemetry attribution", () => {
+  beforeEach(() => {
+    (extractData as Mock).mockClear();
+  });
+
+  function extractDataArgs() {
+    const calls = (extractData as Mock).mock.calls;
+    expect(calls).toHaveLength(1);
+    return calls[0][0];
+  }
+
+  it("traces plain JSON extraction as performLLMExtract", async () => {
+    await performLLMExtract(makeJsonMeta(), {
+      markdown: "# page",
+      metadata: {},
+    } as any);
+
+    const args = extractDataArgs();
+    expect(args.extractOptions.metadata).toEqual({
+      teamId: "test-team",
+      functionId: "performLLMExtract",
+      scrapeId: "test-id",
+      telemetry: undefined,
+    });
+    expect(args.metadata.functionId).toBe("performLLMExtract");
+  });
+
+  it("traces the extraction as the requesting feature when set", async () => {
+    const metadata = {
+      teamId: "test-team",
+      monitorId: "test-monitor",
+      jobId: "test-check",
+      jobKind: "monitor",
+      feature: "monitor_search_judge",
+    };
+    await performLLMExtract(
+      makeJsonMeta({
+        llmTelemetry: { functionId: "monitor/searchJudge", metadata },
+      }),
+      { markdown: "# page", metadata: {} } as any,
+    );
+
+    const args = extractDataArgs();
+    expect(args.extractOptions.metadata).toEqual({
+      teamId: "test-team",
+      functionId: "monitor/searchJudge",
+      scrapeId: "test-id",
+      telemetry: metadata,
+    });
+    expect(args.metadata.functionId).toBe("monitor/searchJudge");
+  });
+});
+
+describe("performLLMExtract empty-result handling", () => {
+  it("keeps the json key (null) and adds a warning when extraction produces nothing", async () => {
+    const mockMeta = {
+      options: {
+        formats: [
+          {
+            type: "json",
+            schema: {
+              type: "object",
+              properties: { rows: { type: "array" } },
+            },
+          },
+        ],
+      },
+      internalOptions: { zeroDataRetention: false, teamId: "test-team" },
+      logger: {
+        child: vi.fn(() => ({
+          info: vi.fn(),
+          debug: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+        })),
+        debug: vi.fn(),
+        info: vi.fn(),
+      },
+      costTracking: {},
+      id: "test-id",
+      url: "https://example.com/doc.pdf",
+    } as any;
+
+    const document = { markdown: "# some content", metadata: {} } as any;
+
+    const result = await performLLMExtract(mockMeta, document);
+
+    // the requested format must never vanish silently
+    expect(result.json).toBeNull();
+    expect(result.warning).toContain(
+      "JSON extraction did not produce a result",
+    );
   });
 });

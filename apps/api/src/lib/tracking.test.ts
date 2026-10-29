@@ -1,12 +1,16 @@
 import { chInsert } from "./clickhouse-client";
+import { keylessTeamId, keylessTeamUuid } from "./keyless-team";
 import {
   buildMonitorTargetInterestRows,
   trackMonitorTargetInterest,
+  trackScrape,
+  trackSearchRequest,
+  trackSearchResults,
 } from "./tracking";
 import type { MonitorTarget } from "../services/monitoring/types";
 
-jest.mock("./clickhouse-client", () => ({
-  chInsert: jest.fn(),
+vi.mock("./clickhouse-client", () => ({
+  chInsert: vi.fn(),
 }));
 
 const scrapeTarget: MonitorTarget = {
@@ -29,9 +33,19 @@ const crawlTarget: MonitorTarget = {
   scrapeOptions: {},
 };
 
+const searchTarget: MonitorTarget = {
+  id: "target-search",
+  type: "search",
+  queries: ["firecrawl launch"],
+  searchWindow: "24h",
+  alertMode: "first_match",
+  depth: "deep",
+  maxResults: 10,
+};
+
 describe("monitor target interest tracking", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it("builds target-grain rows for scrape and crawl monitors", () => {
@@ -89,6 +103,32 @@ describe("monitor target interest tracking", () => {
     expect(rows[1].target_signature).not.toBe(rows[0].target_signature);
   });
 
+  it("search target signatures distinguish maxResults and depth", () => {
+    const signatureFor = (target: MonitorTarget) =>
+      buildMonitorTargetInterestRows({
+        eventType: "configured",
+        teamId: "team-1",
+        monitorId: "monitor-1",
+        monitorStatus: "active",
+        scheduleCron: "0 * * * *",
+        scheduleTimezone: "UTC",
+        intervalMs: 60 * 60 * 1000,
+        targets: [target],
+        zeroDataRetention: false,
+      })[0].target_signature;
+
+    const base = signatureFor(searchTarget);
+    expect(signatureFor({ ...searchTarget })).toBe(base);
+    expect(signatureFor({ ...searchTarget, maxResults: 25 })).not.toBe(base);
+    expect(signatureFor({ ...searchTarget, depth: "standard" })).not.toBe(base);
+    expect(
+      signatureFor({ ...searchTarget, includeDomains: ["firecrawl.dev"] }),
+    ).not.toBe(base);
+    expect(
+      signatureFor({ ...searchTarget, excludeDomains: ["spam.example"] }),
+    ).not.toBe(base);
+  });
+
   it("sends rows to the monitor target ClickHouse table", async () => {
     await trackMonitorTargetInterest({
       eventType: "check_started",
@@ -131,5 +171,73 @@ describe("monitor target interest tracking", () => {
     });
 
     expect(chInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("analytics team ids", () => {
+  const keyless = keylessTeamId("203.0.113.7");
+  const previewTeam = "3adefd26-77ec-5968-8dcf-c94b5630d1de";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The analytics team_id columns are UUIDs, so keyless and preview callers
+  // are stored under their UUIDs rather than their raw team ids.
+  it.each([
+    [keyless, keylessTeamUuid(keyless)],
+    ["preview", previewTeam],
+    [
+      "5f0c2b1e-8d4a-4c3b-9e2f-1a2b3c4d5e6f",
+      "5f0c2b1e-8d4a-4c3b-9e2f-1a2b3c4d5e6f",
+    ],
+  ])("stores team %s as %s", async (teamId, stored) => {
+    await trackScrape({
+      scrapeId: "scrape-1",
+      requestId: "request-1",
+      teamId,
+      url: "https://example.com/",
+      origin: "api",
+      kind: "scrape",
+      isSuccessful: true,
+      creditsCost: 1,
+      timeTaken: 1,
+      zeroDataRetention: false,
+    });
+    await trackSearchRequest({
+      searchId: "search-1",
+      requestId: "request-1",
+      teamId,
+      query: "example",
+      origin: "api",
+      kind: "search",
+      apiVersion: "v2",
+      sources: ["web"],
+      numResults: 1,
+      searchCredits: 1,
+      scrapeCredits: 0,
+      totalCredits: 1,
+      hasScrapeFormats: false,
+      scrapeFormats: [],
+      isSuccessful: true,
+      timeTaken: 1,
+      zeroDataRetention: false,
+    });
+    await trackSearchResults({
+      searchId: "search-1",
+      teamId,
+      response: { web: [{ url: "https://example.com/" }] } as any,
+      zeroDataRetention: false,
+      hasScrapeFormats: false,
+    });
+
+    const tables = vi.mocked(chInsert).mock.calls.map(([table]) => table);
+    expect(tables).toEqual([
+      "scrape_results",
+      "search_requests",
+      "search_results",
+    ]);
+    for (const [, rows] of vi.mocked(chInsert).mock.calls)
+      expect(rows.map(row => row.team_id)).toEqual([stored]);
   });
 });

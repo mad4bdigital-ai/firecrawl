@@ -4,7 +4,6 @@ import * as schema from "../db/schema";
 import {
   insertOmceJobIfNeeded,
   queryIndexAtSplitLevel as rpcQueryIndexAtSplitLevel,
-  queryIndexAtDomainSplitLevel as rpcQueryIndexAtDomainSplitLevel,
   queryOmceSignatures as rpcQueryOmceSignatures,
   queryEngpickerVerdict as rpcQueryEngpickerVerdict,
   queryIndexAtSplitLevelWithMeta as rpcQueryIndexAtSplitLevelWithMeta,
@@ -15,18 +14,26 @@ import { configDotenv } from "dotenv";
 import { ApiError } from "@google-cloud/storage";
 import crypto from "crypto";
 import { redisEvictConnection } from "./redis";
+import {
+  deriveIndexVariantKey,
+  upsertCachedIndexEntries,
+  useIndexCache,
+  type IndexCacheEntry,
+} from "./index-cache";
 import type { Logger } from "winston";
-import psl from "psl";
+import { parseHostname } from "../lib/url-utils";
 import { MapDocument } from "../controllers/v2/types";
 import type { PdfMetadata } from "../scraper/scrapeURL/engines/pdf/types";
 import { storage } from "../lib/gcs-jobs";
 import { withSpan, setSpanAttributes } from "../lib/otel-tracer";
 import { config } from "../config";
+import { getGcsScreenshotUrlResignReason } from "./index-screenshot-url";
 configDotenv();
 
 export async function getIndexFromGCS(
   url: string,
   logger?: Logger,
+  opts: { indexCreatedAt?: string | null } = {},
 ): Promise<any | null> {
   try {
     return await withSpan("firecrawl-index-get-from-gcs", async span => {
@@ -48,26 +55,11 @@ export async function getIndexFromGCS(
       if (typeof parsed.screenshot === "string") {
         try {
           const screenshotUrl = new URL(parsed.screenshot);
-          let expiresAt =
-            parseInt(screenshotUrl.searchParams.get("Expires") ?? "0", 10) *
-            1000;
-          if (expiresAt === 0) {
-            expiresAt =
-              new Date(
-                screenshotUrl.searchParams.get("X-Goog-Date") ??
-                  "1970-01-01T00:00:00Z",
-              ).getTime() +
-              parseInt(
-                screenshotUrl.searchParams.get("X-Goog-Expires") ?? "0",
-                10,
-              ) *
-                1000;
-          }
-          if (
-            screenshotUrl.hostname === "storage.googleapis.com" &&
-            expiresAt < Date.now()
-          ) {
-            logger?.info("Re-signing screenshot URL");
+          const resignReason = getGcsScreenshotUrlResignReason(screenshotUrl, {
+            indexCreatedAt: opts.indexCreatedAt,
+          });
+          if (resignReason !== null) {
+            logger?.info("Re-signing screenshot URL", { reason: resignReason });
             const filePath = decodeURIComponent(
               screenshotUrl.pathname.split("/")[2],
             );
@@ -132,6 +124,7 @@ export async function saveIndexToGCS(
     contentType?: string;
     postprocessorsUsed?: string[];
     proxyUsed?: "basic" | "stealth";
+    firePdfCacheKey?: string;
   },
 ): Promise<void> {
   return await withSpan("firecrawl-index-save-to-gcs", async span => {
@@ -245,11 +238,8 @@ export function generateDomainSplits(
   fakeDomain?: string,
 ): string[] {
   if (fakeDomain) {
-    const parsed = psl.parse(hostname);
-    if (parsed === null) return [fakeDomain];
-
-    const fakeParsed = psl.parse(fakeDomain);
-    if (fakeParsed === null || fakeParsed.domain === null) return [fakeDomain];
+    const fakeParsed = parseHostname(fakeDomain);
+    if (fakeParsed.domain === null) return [fakeDomain];
 
     const subdomains: string[] = (fakeParsed.subdomain ?? "")
       .split(".")
@@ -266,8 +256,12 @@ export function generateDomainSplits(
     return domains;
   }
 
-  const parsed = psl.parse(hostname);
-  if (parsed === null) {
+  const parsed = parseHostname(hostname);
+  // No registrable domain (IP literal, or a single label such as localhost) means
+  // there are no domain splits to generate. Note an unrecognised suffix still
+  // yields one — tldts reports domain.unknown as its own registrable domain.
+  const domain = parsed.domain;
+  if (domain === null) {
     return [];
   }
 
@@ -275,12 +269,12 @@ export function generateDomainSplits(
     .split(".")
     .filter(x => x !== "");
   if (subdomains.length === 1 && subdomains[0] === "www") {
-    return [parsed.domain];
+    return [domain];
   }
 
   const domains: string[] = [];
   for (let i = subdomains.length; i >= 0; i--) {
-    domains.push(subdomains.slice(i).concat([parsed.domain]).join("."));
+    domains.push(subdomains.slice(i).concat([domain]).join("."));
   }
 
   return domains;
@@ -337,10 +331,51 @@ export async function processIndexInsertJobs() {
   try {
     await dbIndex.insert(schema.index).values(jobs);
     _logger.info(`Index inserter inserted jobs`, { jobCount: jobs.length });
+    writeThroughIndexCache(jobs);
   } catch (error) {
     _logger.error(`Index inserter failed to insert jobs`, {
       error,
       jobCount: jobs.length,
+    });
+  }
+}
+
+// Write-through to the Dragonfly index cache after rows are durably in the
+// index DB. created_at approximates the DB's defaultNow() by milliseconds,
+// which is irrelevant against day-scale maxAge windows. Fire-and-forget: a
+// cache failure must never affect the insert loop.
+function writeThroughIndexCache(jobs: any[]) {
+  if (!useIndexCache) {
+    return;
+  }
+  const createdAt = new Date().toISOString();
+  const byKey = new Map<string, IndexCacheEntry[]>();
+  for (const job of jobs) {
+    if (!Buffer.isBuffer(job.url_hash) || typeof job.id !== "string") {
+      continue;
+    }
+    const key = deriveIndexVariantKey({
+      urlHash: job.url_hash,
+      isMobile: job.is_mobile,
+      blockAds: job.block_ads,
+      isStealth: job.is_stealth,
+      locationCountry: job.location_country ?? null,
+      locationLanguages: job.location_languages ?? null,
+    });
+    const entries = byKey.get(key) ?? [];
+    entries.push({
+      id: job.id,
+      created_at: createdAt,
+      status: job.status,
+      has_screenshot: job.has_screenshot,
+      has_screenshot_fullscreen: job.has_screenshot_fullscreen,
+      wait_time_ms: job.wait_time_ms ?? null,
+    });
+    byKey.set(key, entries);
+  }
+  for (const [key, entries] of byKey) {
+    upsertCachedIndexEntries(key, entries, _logger).catch(error => {
+      _logger.warn("Index cache write-through failed", { error, key });
     });
   }
 }
@@ -430,39 +465,6 @@ export async function queryIndexAtSplitLevel(
     return [...links].slice(0, limit);
   } catch (error) {
     _logger.warn("Error querying index", { error, url, limit });
-    return [];
-  }
-}
-
-export async function queryIndexAtDomainSplitLevel(
-  hostname: string,
-  limit: number,
-  maxAge = 2 * 24 * 60 * 60 * 1000,
-): Promise<string[]> {
-  if (!useIndex || config.FIRECRAWL_INDEX_WRITE_ONLY) {
-    return [];
-  }
-
-  const domainSplitsHash = generateDomainSplits(hostname).map(x => hashURL(x));
-
-  const level = domainSplitsHash.length - 1;
-  if (domainSplitsHash.length === 0) {
-    return [];
-  }
-
-  // Raw SQL returns the full result set (no PostgREST 1000-row cap), so the
-  // previous .range() pagination loop is no longer needed.
-  try {
-    const data = await rpcQueryIndexAtDomainSplitLevel(
-      level,
-      domainSplitsHash[level],
-      new Date(Date.now() - maxAge).toISOString(),
-    );
-    const links = new Set<string>();
-    data.forEach(x => links.add(x.resolved_url));
-    return [...links].slice(0, limit);
-  } catch (error) {
-    _logger.warn("Error querying index", { error, hostname, limit });
     return [];
   }
 }

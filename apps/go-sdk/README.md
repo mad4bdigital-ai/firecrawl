@@ -1,6 +1,6 @@
 # Firecrawl Go SDK
 
-Go SDK for the [Firecrawl](https://firecrawl.dev) v2 web scraping API.
+Go SDK for [Firecrawl](https://firecrawl.dev), the context API for AI agents. Search, scrape, parse, crawl, map, and interact with the web, and run Agent and Monitor jobs on the v2 API.
 
 ## Requirements
 
@@ -108,6 +108,38 @@ if err != nil {
 fmt.Println(doc.Video)
 ```
 
+### Product Extraction
+
+Use the `product` format on product pages for structured product extraction
+(title, price, availability, variants). The result is returned on the document's
+`Product` field. This is the deterministic counterpart to the LLM-based `json` format.
+
+```go
+doc, err := client.Scrape(ctx, "https://example.com/products/widget", &firecrawl.ScrapeOptions{
+	Formats: []string{"product"},
+})
+if err != nil {
+	return err
+}
+fmt.Println(doc.Product)
+```
+
+### Menu Extraction
+
+Use the `menu` format on menu pages for structured menu extraction
+(merchant, sections, items, prices, availability). The result is returned on the
+document's `Menu` field. This is the deterministic counterpart to the LLM-based `json` format.
+
+```go
+doc, err := client.Scrape(ctx, "https://example.com/menu", &firecrawl.ScrapeOptions{
+	Formats: []string{"menu"},
+})
+if err != nil {
+	return err
+}
+fmt.Println(doc.Menu)
+```
+
 #### Interactive Browser
 
 Execute code in a scrape-bound browser session:
@@ -126,7 +158,7 @@ deleteResp, err := client.StopInteractiveBrowser(ctx, scrapeJobID)
 
 Upload a local file (`html`, `pdf`, `docx`, etc.) via multipart form data and
 parse it synchronously. Parse options intentionally exclude browser-only
-features such as change tracking, screenshot, branding, audio, video, actions,
+features such as change tracking, screenshot, branding, product, menu, audio, video, actions,
 waitFor, location, and mobile. The `Proxy` option only accepts `"auto"` or `"basic"`.
 
 ```go
@@ -141,6 +173,16 @@ doc, err := client.Parse(ctx, file, &firecrawl.ParseOptions{
 	Formats: []string{"markdown"},
 })
 fmt.Println(doc.Markdown)
+```
+
+List the input formats the parse endpoint accepts. `Available` is `false` when
+a format is supported but disabled on the deployment (for example, image OCR).
+
+```go
+formats, err := client.GetParseFormats(ctx)
+for _, f := range formats {
+	fmt.Println(f.Format, f.Kind, f.Extensions, f.MimeTypes, f.Available)
+}
 ```
 
 ### Crawl
@@ -221,6 +263,24 @@ results, err := client.Search(ctx, "firecrawl web scraping", &firecrawl.SearchOp
 })
 ```
 
+### Developer Search
+
+Search public repositories, GitHub issues, merged pull requests, READMEs and code documentation. `DeveloperSearch` replaces the deprecated `SearchGitHub`.
+
+```go
+resp, err := client.DeveloperSearch(ctx, "retry an http request with exponential backoff", &firecrawl.DeveloperSearchOptions{
+	K:     firecrawl.Int(5),
+	Types: []string{"issue", "pull_request"},
+	Repos: []string{"golang/go"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+for _, r := range resp.Results {
+	fmt.Println(r.Title, r.URL)
+}
+```
+
 ### Agent
 
 Run an AI-powered agent to extract structured data.
@@ -253,6 +313,15 @@ resp, err := client.StartAgent(ctx, &firecrawl.AgentOptions{
 })
 status, err := client.GetAgentStatus(ctx, resp.ID)
 _, err = client.CancelAgent(ctx, resp.ID)
+
+// Let the agent use Exchange data providers connected to your team
+status, err = client.Agent(ctx, &firecrawl.AgentOptions{
+	Prompt: "Summarize the latest earnings for AAPL",
+	Exchange: &firecrawl.AgentExchangeOptions{
+		Enabled:  firecrawl.Bool(true),
+		Toolkits: &[]string{"your-provider-slug"},
+	},
+})
 ```
 
 ### Browser
@@ -325,6 +394,56 @@ The SDK automatically retries transient failures:
 - **Not retried:** 401, 429, and other 4xx errors
 - **Backoff:** Exponential backoff with configurable factor
 
+When every attempt fails at the transport layer, the returned `*FirecrawlError` wraps the
+last underlying error, so errors raised by a custom `http.Client` (passed with
+`option.WithHTTPClient`) can be matched with `errors.Is` or `errors.As`:
+
+```go
+var errResponseTooLarge = errors.New("response too large")
+
+const maxResponseBytes = 20 << 20
+
+type cappedBody struct {
+	io.ReadCloser
+	remaining int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		return 0, errResponseTooLarge
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.remaining -= int64(n)
+	if b.remaining <= 0 {
+		return n, errResponseTooLarge
+	}
+	return n, err
+}
+
+type cappingTransport struct{}
+
+func (cappingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = &cappedBody{ReadCloser: resp.Body, remaining: maxResponseBytes + 1}
+	return resp, nil
+}
+
+client, _ := firecrawl.NewClient(
+	option.WithHTTPClient(&http.Client{Transport: cappingTransport{}}),
+	option.WithMaxRetries(0),
+)
+_, err := client.Scrape(ctx, "https://example.com", nil)
+if errors.Is(err, errResponseTooLarge) {
+	// The response exceeded maxResponseBytes.
+}
+```
+
 ## Context Support
 
 All methods accept a `context.Context` for cancellation and deadline control:
@@ -394,3 +513,47 @@ Users pin via the semantic version suffix; they never reference the
 ## License
 
 MIT
+
+## Alexandria tools
+
+Requires the matching Alexandria API deployment and team access. Semantic discovery
+returns contracts alongside web results in `SearchData.Tools`:
+
+```go
+limit := 2
+result, err := client.Search(ctx, "podcast conversations about AI agents", &firecrawl.SearchOptions{
+    Sources: []interface{}{"web", "alexandria"},
+    Limit: &limit,
+})
+if err != nil {
+    return err
+}
+fmt.Println(result.Tools, result.Warning)
+```
+
+For progressive disclosure, Find Tools returns an item's next detail request and,
+when more results are available, a top-level next page request:
+
+```go
+found, err := client.FindTools(ctx, &firecrawl.FindToolsOptions{
+    Providers: []string{"particle"},
+    Limit: &limit,
+})
+if err != nil {
+    return err
+}
+fmt.Println(found.Items)
+if found.Next != nil {
+    page, err := client.ScrapeAlexandria(ctx, []firecrawl.AlexandriaCall{*found.Next}, nil)
+    if err != nil {
+        return err
+    }
+    fmt.Println(page.Alexandria)
+}
+```
+
+`ScrapeAlexandria` also executes selected tools through `/v2/scrape`. Inspect each
+result's `Error` and `CreditsCost`. It generates one request ID before retries;
+reuse `AlexandriaOptions.RequestID` for the identical payload after an uncertain
+outcome. Both results and `AlexandriaExecutionError` carry `RequestID`. Find Tools
+costs zero credits; selected tool execution uses the published price.

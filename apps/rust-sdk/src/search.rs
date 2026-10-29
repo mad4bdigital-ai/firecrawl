@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::client::Client;
 use crate::scrape::ScrapeOptions;
 use crate::types::{
-    Document, SearchCategory, SearchResultImage, SearchResultNews, SearchResultWeb, SearchSource,
+    DiscoveredTool, Document, SearchCategory, SearchResultImage, SearchResultNews, SearchResultWeb,
+    SearchSource,
 };
 use crate::FirecrawlError;
 
@@ -17,8 +18,14 @@ pub struct SearchOptions {
     /// Maximum number of results to return. Default: 5, Max: 20.
     pub limit: Option<u32>,
 
-    /// Search sources to query (web, news, images).
+    /// Search sources to query (web, news, images, alexandria).
     pub sources: Option<Vec<SearchSource>>,
+
+    /// Enable Alexandria domain-tool discovery (send alongside `sources: ["alexandria"]`).
+    pub domain_tools: Option<bool>,
+
+    /// Discovery response detail; defaults to compact.
+    pub tool_detail: Option<crate::types::ToolDetail>,
 
     /// Categories to filter results (github, research, pdf).
     pub categories: Option<Vec<SearchCategory>>,
@@ -35,17 +42,27 @@ pub struct SearchOptions {
     /// Geographic location string for local search results.
     pub location: Option<String>,
 
+    /// Country code to geo-target search results (e.g., "de").
+    pub country: Option<String>,
+
     /// Whether to ignore invalid URLs in results.
+    #[serde(rename = "ignoreInvalidURLs")]
     pub ignore_invalid_urls: Option<bool>,
 
     /// Timeout in milliseconds.
     pub timeout: Option<u32>,
+
+    /// Whether to generate query-relevant highlights. Defaults to true.
+    pub highlights: Option<bool>,
 
     /// Scrape options to apply to each search result.
     pub scrape_options: Option<ScrapeOptions>,
 
     /// Integration identifier for tracking.
     pub integration: Option<String>,
+
+    /// Origin label for request attribution (e.g., "rust-sdk@2.8.0").
+    pub origin: Option<String>,
 }
 
 /// Request body for search endpoint.
@@ -68,6 +85,7 @@ pub struct SearchData {
     pub news: Option<Vec<SearchResultNews>>,
     /// Image search results.
     pub images: Option<Vec<SearchResultImage>>,
+    pub tools: Option<Vec<DiscoveredTool>>,
 }
 
 /// A search result that may be a simple result or a full document.
@@ -173,9 +191,16 @@ impl Client {
         query: impl AsRef<str>,
         options: impl Into<Option<SearchOptions>>,
     ) -> Result<SearchResponse, FirecrawlError> {
+        if query.as_ref().trim().is_empty() {
+            return Err(FirecrawlError::Misuse("Query cannot be empty".into()));
+        }
+        let mut options = options.into().unwrap_or_default();
+        if options.origin.is_none() {
+            options.origin = Some(format!("rust-sdk@{}", env!("CARGO_PKG_VERSION")));
+        }
         let body = SearchRequest {
             query: query.as_ref().to_string(),
-            options: options.into().unwrap_or_default(),
+            options,
         };
 
         let headers = self.prepare_headers(None);
@@ -257,6 +282,48 @@ impl Client {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn serializes_highlights_option() {
+        let options = SearchOptions {
+            highlights: Some(false),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(options).unwrap(),
+            json!({ "highlights": false })
+        );
+    }
+
+    #[test]
+    fn serializes_country_option() {
+        let options = SearchOptions {
+            country: Some("de".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(options).unwrap(),
+            json!({ "country": "de" })
+        );
+
+        let default_value = serde_json::to_value(SearchOptions::default()).unwrap();
+        assert!(default_value.get("country").is_none());
+    }
+
+    #[test]
+    fn serializes_ignore_invalid_urls_option() {
+        let options = SearchOptions {
+            ignore_invalid_urls: Some(true),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(options).unwrap(),
+            json!({ "ignoreInvalidURLs": true })
+        );
+    }
 
     #[tokio::test]
     async fn test_search_with_mock() {
@@ -392,14 +459,22 @@ mod tests {
             .with_body(
                 json!({
                     "success": false,
-                    "error": "Invalid query"
+                    "error": "Invalid limit"
                 })
                 .to_string(),
             )
             .create();
 
         let client = Client::new_selfhosted(server.url(), Some("test_key")).unwrap();
-        let result = client.search("", None).await;
+        let result = client
+            .search(
+                "test",
+                SearchOptions {
+                    limit: Some(0),
+                    ..Default::default()
+                },
+            )
+            .await;
 
         assert!(result.is_err());
         mock.assert();

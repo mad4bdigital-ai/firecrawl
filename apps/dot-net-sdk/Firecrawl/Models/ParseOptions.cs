@@ -8,7 +8,7 @@ namespace Firecrawl.Models;
 ///
 /// <para>
 /// Parse does not support browser-rendering formats/options such as change
-/// tracking, screenshot, branding, actions, waitFor, location, or mobile.
+/// tracking, screenshot, branding, product, menu, actions, waitFor, location, or mobile.
 /// These are rejected client-side in <see cref="Validate"/>.
 /// </para>
 /// </summary>
@@ -21,6 +21,8 @@ public class ParseOptions
         "screenshot",
         "screenshot@fullPage",
         "branding",
+        "product",
+        "menu",
     };
 
     internal static readonly HashSet<string> SupportedProxies = new(StringComparer.OrdinalIgnoreCase)
@@ -77,9 +79,21 @@ public class ParseOptions
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Integration { get; set; }
 
+    /// <summary>
+    /// Scans the parsed content for prompt injection before LLM-backed formats run.
+    /// A detection fails the parse with SCRAPE_PROMPT_INJECTION_DETECTED. Adds 4 credits when the check scans the whole content.
+    /// </summary>
+    [JsonPropertyName("checkPromptInjection")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? CheckPromptInjection { get; set; }
+
     [JsonPropertyName("redactPII")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? RedactPII { get; set; }
+
+    [JsonPropertyName("auditMetadata")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AuditMetadata? AuditMetadata { get; set; }
 
     /// <summary>
     /// Validate the options against /v2/parse's supported surface.

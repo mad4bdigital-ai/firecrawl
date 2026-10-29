@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import {
   pgTable,
   uuid,
@@ -13,12 +13,27 @@ import {
   timestamp,
   date,
   bytea,
+  check,
+  foreignKey,
+  index,
+  primaryKey,
+  unique,
 } from "drizzle-orm/pg-core";
 
 const ts = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "string" });
 const bigintNum = (name: string) => bigint(name, { mode: "number" });
 const num = (name: string) => numeric(name, { mode: "number" });
+
+// Keyless free-tier credit usage log (see keyless_credit_usage migration).
+// team_id is the deterministic per-IP keyless team UUID; ip is the raw client IP.
+export const keyless_credit_usage = pgTable("keyless_credit_usage", {
+  id: bigintNum("id").notNull().generatedByDefaultAsIdentity(),
+  team_id: uuid("team_id").notNull(),
+  ip: text("ip").notNull(),
+  credits_used: integer("credits_used").notNull(),
+  created_at: ts("created_at").notNull().defaultNow(),
+});
 
 export const agent_sponsors = pgTable("agent_sponsors", {
   id: bigintNum("id").notNull().generatedByDefaultAsIdentity(),
@@ -37,42 +52,42 @@ export const agent_sponsors = pgTable("agent_sponsors", {
   updated_at: ts("updated_at").defaultNow(),
 });
 
-export const agents = pgTable("agents", {
+export const agent_session_settings = pgTable("agent_session_settings", {
   id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
+  session_id: uuid("session_id").notNull(),
   team_id: uuid("team_id").notNull(),
-  options: jsonb("options"),
-  created_at: ts("created_at").notNull().defaultNow(),
-  time_taken: num("time_taken").notNull(),
-  credits_cost: integer("credits_cost").notNull(),
-  cost_tracking: jsonb("cost_tracking"),
-  is_successful: boolean("is_successful").notNull(),
-  error: text("error"),
-});
-
-export const api_keys = pgTable("api_keys", {
-  id: bigintNum("id").notNull().generatedByDefaultAsIdentity(),
+  hidden: boolean("hidden").default(false),
+  starred: boolean("starred").default(false),
+  label: text("label"),
   created_at: ts("created_at").defaultNow(),
-  key: uuid("key").defaultRandom(),
-  name: text("name"),
-  team_id: uuid("team_id"),
-  owner_id: uuid("owner_id"),
-  agent_provisioned: boolean("agent_provisioned").default(false),
+  updated_at: ts("updated_at").defaultNow(),
+  share_id: uuid("share_id"),
 });
 
-export const batch_scrapes = pgTable("batch_scrapes", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  team_id: uuid("team_id").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  num_docs: integer("num_docs").notNull(),
-  credits_cost: integer("credits_cost").notNull(),
-  cancelled: boolean("cancelled").notNull(),
-});
+export const api_keys = pgTable(
+  "api_keys",
+  {
+    id: bigintNum("id").notNull().generatedByDefaultAsIdentity(),
+    created_at: ts("created_at").defaultNow(),
+    key: uuid("key").defaultRandom(),
+    name: text("name"),
+    team_id: uuid("team_id"),
+    owner_id: uuid("owner_id"),
+    agent_provisioned: boolean("agent_provisioned").default(false),
+    // API-key-scoped concurrency limit; null = key inherits the team limit only
+    concurrency: integer("concurrency"),
+  },
+  table => [
+    // Target of key_restriction_config's composite FK, which pins a
+    // restriction row's team_id to the key's actual team.
+    unique("api_keys_id_team_id_key").on(table.id, table.team_id),
+  ],
+);
 
 export const blocklist = pgTable("blocklist", {
   id: bigintNum("id").notNull().generatedByDefaultAsIdentity(),
   data: jsonb("data").notNull(),
+  org_id: uuid("org_id"),
 });
 
 export const blocklist_hits = pgTable("blocklist_hits", {
@@ -101,7 +116,10 @@ export const browser_session_activities = pgTable(
 
 export const browser_sessions = pgTable("browser_sessions", {
   id: uuid("id").notNull(),
+  zero_data_retention: boolean("zero_data_retention").notNull().default(false),
   team_id: text("team_id").notNull(),
+  request_id: uuid("request_id"),
+  should_bill: boolean("should_bill").notNull().default(true),
   browser_id: text("browser_id").notNull(),
   workspace_id: text("workspace_id").notNull(),
   context_id: text("context_id").notNull(),
@@ -117,40 +135,23 @@ export const browser_sessions = pgTable("browser_sessions", {
   credits_used: integer("credits_used"),
   cdp_interactive_path: text("cdp_interactive_path"),
   scrape_id: uuid("scrape_id"),
+  // The persistent profile the session was created with, if any.
+  profile_name: text("profile_name"),
 });
 
-export const concurrency_log = pgTable("concurrency_log", {
-  id: bigintNum("id").notNull().generatedByDefaultAsIdentity(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  team_id: uuid("team_id").notNull(),
-  concurrency: integer("concurrency").notNull(),
-});
-
-export const crawls = pgTable("crawls", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  url: text("url").notNull(),
-  team_id: uuid("team_id").notNull(),
-  options: jsonb("options"),
-  created_at: ts("created_at").notNull().defaultNow(),
-  num_docs: integer("num_docs").notNull(),
-  credits_cost: integer("credits_cost").notNull(),
-  cancelled: boolean("cancelled").notNull(),
-  monitor_id: uuid("monitor_id"),
-  monitor_check_id: uuid("monitor_check_id"),
-});
-
-export const deep_researches = pgTable("deep_researches", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  query: text("query").notNull(),
-  team_id: uuid("team_id").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  time_taken: num("time_taken").notNull(),
-  credits_cost: integer("credits_cost").notNull(),
-  cost_tracking: jsonb("cost_tracking"),
-  options: jsonb("options"),
-});
+// Index of saved persistent browser profiles (see browser_profiles migration).
+// Contents live in Hangar; reconciliation upserts a row after a confirmed save.
+export const browser_profiles = pgTable(
+  "browser_profiles",
+  {
+    team_id: uuid("team_id").notNull(),
+    name: text("name").notNull(),
+    created_at: ts("created_at").notNull().defaultNow(),
+    saved_at: ts("saved_at").notNull(),
+    size_bytes: bigintNum("size_bytes"),
+  },
+  table => [primaryKey({ columns: [table.team_id, table.name] })],
+);
 
 export const deterministic_json_scripts = pgTable(
   "deterministic_json_scripts",
@@ -184,24 +185,60 @@ export const eb_sync = pgTable("eb-sync", {
   team_id: text("team_id"),
 });
 
-export const extracts = pgTable("extracts", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  urls: text("urls").array().notNull(),
-  options: jsonb("options"),
-  model_kind: text("model_kind").notNull(),
-  team_id: uuid("team_id").notNull(),
-  is_successful: boolean("is_successful").notNull(),
-  error: text("error"),
-  created_at: ts("created_at").notNull().defaultNow(),
-  credits_cost: integer("credits_cost").notNull(),
-  cost_tracking: jsonb("cost_tracking"),
-});
-
 export const idempotency_keys = pgTable("idempotency_keys", {
   key: uuid("key").notNull().defaultRandom(),
   created_at: ts("created_at").notNull().defaultNow(),
 });
+
+// Per-team API key IP allowlist, gated by the ipRestriction team flag.
+// Enforced only when allowed_ips is non-empty; entries are IPv4/IPv6/CIDR.
+export const ip_restriction_config = pgTable("ip_restriction_config", {
+  id: uuid("id").notNull().defaultRandom(),
+  team_id: uuid("team_id").notNull().unique(),
+  allowed_ips: jsonb("allowed_ips")
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  created_at: ts("created_at").notNull().defaultNow(),
+  updated_at: ts("updated_at").notNull().defaultNow(),
+});
+
+// Per-API-key scope/format lockdown, gated by the keyRestriction team flag.
+// Each allowlist is enforced only when non-empty; allowed_formats holds v2
+// format type names, allowed_endpoints holds endpoint group names.
+export const key_restriction_config = pgTable(
+  "key_restriction_config",
+  {
+    id: uuid("id").notNull().defaultRandom(),
+    api_key_id: bigintNum("api_key_id").notNull().unique(),
+    team_id: uuid("team_id").notNull(),
+    allowed_formats: jsonb("allowed_formats")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    allowed_endpoints: jsonb("allowed_endpoints")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    created_at: ts("created_at").notNull().defaultNow(),
+    updated_at: ts("updated_at").notNull().defaultNow(),
+  },
+  table => [
+    // Composite FK keeps team_id consistent with the key's actual team, so
+    // team-scoped dashboard listings can't target another team's key.
+    foreignKey({
+      columns: [table.api_key_id, table.team_id],
+      foreignColumns: [api_keys.id, api_keys.team_id],
+    }).onDelete("cascade"),
+    // The API treats non-array/non-string junk as an empty allowlist, which
+    // would silently lift the restriction — make such rows unrepresentable.
+    check(
+      "allowed_formats_is_string_array",
+      sql`jsonb_typeof(${table.allowed_formats}) = 'array' AND NOT jsonb_path_exists(${table.allowed_formats}, '$[*] ? (@.type() != "string")')`,
+    ),
+    check(
+      "allowed_endpoints_is_string_array",
+      sql`jsonb_typeof(${table.allowed_endpoints}) = 'array' AND NOT jsonb_path_exists(${table.allowed_endpoints}, '$[*] ? (@.type() != "string")')`,
+    ),
+  ],
+);
 
 export const llm_texts = pgTable("llm_texts", {
   id: uuid("id").notNull().defaultRandom(),
@@ -211,29 +248,6 @@ export const llm_texts = pgTable("llm_texts", {
   max_urls: integer("max_urls").notNull(),
   created_at: ts("created_at").notNull().defaultNow(),
   updated_at: ts("updated_at"),
-});
-
-export const llmstxts = pgTable("llmstxts", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  url: text("url").notNull(),
-  team_id: uuid("team_id").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  num_urls: integer("num_urls").notNull(),
-  options: jsonb("options"),
-  cost_tracking: jsonb("cost_tracking"),
-  credits_cost: integer("credits_cost").notNull(),
-});
-
-export const maps = pgTable("maps", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  url: text("url").notNull(),
-  options: jsonb("options"),
-  team_id: uuid("team_id").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  num_results: integer("num_results").notNull(),
-  credits_cost: integer("credits_cost").notNull(),
 });
 
 export const monitor_check_pages = pgTable("monitor_check_pages", {
@@ -270,6 +284,7 @@ export const monitor_checks = pgTable("monitor_checks", {
   reserved_credits: integer("reserved_credits"),
   actual_credits: integer("actual_credits"),
   autumn_lock_id: text("autumn_lock_id"),
+  partner_run_token: text("partner_run_token"),
   billing_status: text("billing_status").notNull().default("not_applicable"),
   total_pages: integer("total_pages").notNull().default(0),
   same_count: integer("same_count").notNull().default(0),
@@ -346,6 +361,24 @@ export const monitors = pgTable("monitors", {
   deleted_at: ts("deleted_at"),
   goal: text("goal"),
   judge_enabled: boolean("judge_enabled").notNull().default(false),
+  partner_job_token: text("partner_job_token"),
+});
+
+export const slack_installations = pgTable("slack_installations", {
+  id: uuid("id").notNull().defaultRandom(),
+  team_id: uuid("team_id").notNull(),
+  slack_team_id: text("slack_team_id").notNull(),
+  slack_team_name: text("slack_team_name"),
+  slack_enterprise_id: text("slack_enterprise_id"),
+  bot_user_id: text("bot_user_id"),
+  bot_token: text("bot_token").notNull(),
+  scope: text("scope"),
+  authed_user_id: text("authed_user_id"),
+  app_id: text("app_id"),
+  incoming_webhook: jsonb("incoming_webhook"),
+  revoked_at: ts("revoked_at"),
+  created_at: ts("created_at").notNull().defaultNow(),
+  updated_at: ts("updated_at").notNull().defaultNow(),
 });
 
 export const notification_preferences = pgTable("notification_preferences", {
@@ -358,21 +391,6 @@ export const notification_preferences = pgTable("notification_preferences", {
     .array()
     .default(["rate_limit_warnings", "system_alerts"]),
   unsubscribed_all: boolean("unsubscribed_all").default(false),
-});
-
-export const parses = pgTable("parses", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  url: text("url").notNull(),
-  is_successful: boolean("is_successful").notNull(),
-  error: text("error"),
-  time_taken: num("time_taken").notNull(),
-  team_id: uuid("team_id").notNull(),
-  options: jsonb("options"),
-  cost_tracking: jsonb("cost_tracking"),
-  pdf_num_pages: integer("pdf_num_pages"),
-  credits_cost: integer("credits_cost").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
 });
 
 export const prices = pgTable("prices", {
@@ -424,64 +442,131 @@ export const products = pgTable("products", {
   type: text("type"),
 });
 
-export const requests = pgTable("requests", {
-  id: uuid("id").notNull(),
-  kind: text("kind").notNull(),
-  api_version: text("api_version").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  team_id: uuid("team_id").notNull(),
-  origin: text("origin").notNull(),
-  integration: text("integration"),
-  target_hint: text("target_hint").notNull(),
-  dr_clean_by: ts("dr_clean_by"),
-  api_key_id: bigintNum("api_key_id"),
-});
-
-export const scrapes = pgTable("scrapes", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  url: text("url").notNull(),
-  is_successful: boolean("is_successful").notNull(),
-  error: text("error"),
-  time_taken: num("time_taken").notNull(),
-  team_id: uuid("team_id").notNull(),
-  options: jsonb("options"),
-  cost_tracking: jsonb("cost_tracking"),
-  pdf_num_pages: integer("pdf_num_pages"),
-  credits_cost: integer("credits_cost").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  monitor_id: uuid("monitor_id"),
-  monitor_check_id: uuid("monitor_check_id"),
-  content_type: text("content_type"),
-});
-
 export const search_feedback = pgTable("search_feedback", {
   id: uuid("id").notNull().defaultRandom(),
-  search_id: uuid("search_id").notNull(),
+  search_id: uuid("search_id"),
+  endpoint: text("endpoint").notNull().default("search"),
+  job_id: uuid("job_id"),
+  request_id: uuid("request_id"),
+  api_version: text("api_version").default("v2"),
   team_id: uuid("team_id").notNull(),
+  api_key_id: bigintNum("api_key_id"),
   overall_rating: text("overall_rating").notNull(),
+  issue_types: text("issue_types").array().notNull().default([]),
+  tags: text("tags").array().notNull().default([]),
+  comment: text("comment"),
   valuable_sources: jsonb("valuable_sources").notNull().default([]),
   missing_content: jsonb("missing_content").notNull().default([]),
   query_suggestions: text("query_suggestions"),
+  metadata: jsonb("metadata").notNull().default({}),
+  job_status: text("job_status"),
+  credits_billed: integer("credits_billed").notNull().default(0),
   integration: text("integration"),
   origin: text("origin"),
   credits_refunded: integer("credits_refunded").notNull().default(0),
+  refund_policy: jsonb("refund_policy"),
   created_at: ts("created_at").notNull().defaultNow(),
+  updated_at: ts("updated_at").notNull().defaultNow(),
 });
 
-export const searches = pgTable("searches", {
-  id: uuid("id").notNull(),
-  request_id: uuid("request_id").notNull(),
-  query: text("query").notNull(),
-  team_id: uuid("team_id").notNull(),
-  options: jsonb("options"),
-  time_taken: num("time_taken").notNull(),
-  created_at: ts("created_at").notNull().defaultNow(),
-  credits_cost: integer("credits_cost").notNull(),
-  is_successful: boolean("is_successful").notNull(),
-  error: text("error"),
-  num_results: integer("num_results").notNull(),
-});
+export const alexandria_feedback = pgTable(
+  "alexandria_feedback",
+  {
+    id: uuid("id").notNull().defaultRandom().primaryKey(),
+    team_id: uuid("team_id").notNull(),
+    api_key_id: bigintNum("api_key_id"),
+    api_version: text("api_version").notNull().default("v2"),
+    rating: text("rating").notNull(),
+    requested_url: text("requested_url").notNull(),
+    // Stored generated column; never written by the API.
+    requested_host: text("requested_host").generatedAlwaysAs(
+      (): SQL =>
+        sql`lower(substring(${alexandria_feedback.requested_url} from '^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]*@)?([^/?#:]+)'))`,
+    ),
+    requested_functionality: text("requested_functionality").notNull(),
+    rationale: text("rationale").notNull(),
+    objective: text("objective"),
+    origin: text("origin"),
+    integration: text("integration"),
+    schema_version: integer("schema_version").notNull().default(2),
+    credits_refunded: integer("credits_refunded").notNull().default(0),
+    refund_policy: jsonb("refund_policy"),
+    created_at: ts("created_at").notNull().defaultNow(),
+    updated_at: ts("updated_at").notNull().defaultNow(),
+  },
+  table => [
+    check(
+      "alexandria_feedback_credits_refunded_check",
+      sql`${table.credits_refunded} >= 0`,
+    ),
+    check(
+      "alexandria_feedback_rating_check",
+      sql`${table.rating} IN ('good', 'partial', 'bad')`,
+    ),
+    check(
+      "alexandria_feedback_requested_url_check",
+      sql`char_length(${table.requested_url}) <= 2048`,
+    ),
+  ],
+);
+
+export const alexandria_feedback_providers = pgTable(
+  "alexandria_feedback_providers",
+  {
+    id: uuid("id").notNull().defaultRandom().primaryKey(),
+    feedback_id: uuid("feedback_id")
+      .notNull()
+      .references(() => alexandria_feedback.id, { onDelete: "cascade" }),
+    team_id: uuid("team_id").notNull(),
+    position: smallint("position").notNull(),
+    name: text("name").notNull(),
+    issue: text("issue").notNull(),
+    why: text("why").notNull(),
+    created_at: ts("created_at").notNull().defaultNow(),
+  },
+  table => [
+    unique("alexandria_feedback_providers_feedback_id_position_key").on(
+      table.feedback_id,
+      table.position,
+    ),
+    check(
+      "alexandria_feedback_providers_issue_check",
+      sql`${table.issue} IN ('missing_provider', 'insufficient_coverage', 'provider_unavailable', 'other')`,
+    ),
+  ],
+);
+
+export const alexandria_feedback_capabilities = pgTable(
+  "alexandria_feedback_capabilities",
+  {
+    id: uuid("id").notNull().defaultRandom().primaryKey(),
+    feedback_id: uuid("feedback_id")
+      .notNull()
+      .references(() => alexandria_feedback.id, { onDelete: "cascade" }),
+    team_id: uuid("team_id").notNull(),
+    position: smallint("position").notNull(),
+    name: text("name").notNull(),
+    provider: text("provider").notNull(),
+    issue: text("issue").notNull(),
+    why: text("why").notNull(),
+    requested_functionality: text("requested_functionality"),
+    created_at: ts("created_at").notNull().defaultNow(),
+  },
+  table => [
+    unique("alexandria_feedback_capabilities_feedback_id_position_key").on(
+      table.feedback_id,
+      table.position,
+    ),
+    check(
+      "alexandria_feedback_capabilities_issue_check",
+      sql`${table.issue} IN ('new_capability_request', 'missing_capability', 'insufficient_functionality', 'incorrect_result', 'execution_error', 'other')`,
+    ),
+    check(
+      "alexandria_feedback_capabilities_requested_functionality_check",
+      sql`${table.issue} <> 'new_capability_request' OR ${table.requested_functionality} IS NOT NULL`,
+    ),
+  ],
+);
 
 export const subscriptions = pgTable("subscriptions", {
   id: text("id").notNull(),
@@ -509,6 +594,16 @@ export const subscriptions = pgTable("subscriptions", {
   pending_schedule_id: text("pending_schedule_id"),
 });
 
+export const partner_provisioned_accounts = pgTable(
+  "partner_provisioned_accounts",
+  {
+    id: bigintNum("id").notNull().generatedByDefaultAsIdentity(),
+    integration_id: bigintNum("integration_id").notNull(),
+    team_id: uuid("team_id").notNull(),
+    org_id: uuid("org_id").notNull(),
+  },
+);
+
 export const teams = pgTable("teams", {
   id: uuid("id").notNull().defaultRandom(),
   created_at: ts("created_at").defaultNow(),
@@ -522,6 +617,29 @@ export const teams = pgTable("teams", {
   referrer_integration: varchar("referrer_integration"),
   allocated_concurrent_browsers: integer("allocated_concurrent_browsers"),
   org_id: uuid("org_id").notNull(),
+});
+
+// Org-scoped threat protection configuration (enterprise feature, gated by the
+// `threatProtection` team flag). One row per org; DDL is applied out-of-band.
+// The policy document lives in the `config` jsonb column (parsed tolerantly in
+// lib/threat-protection/store.ts); only `mode` is a dedicated column.
+export const threat_protection_config = pgTable("threat_protection_config", {
+  id: uuid("id").notNull().defaultRandom(),
+  org_id: uuid("org_id").notNull().unique(),
+  mode: varchar("mode").notNull().default("off"),
+  config: jsonb("config").notNull().default({}),
+  created_at: ts("created_at").notNull().defaultNow(),
+  updated_at: ts("updated_at").notNull().defaultNow(),
+});
+
+export const siem_logging_config = pgTable("siem_logging_config", {
+  id: uuid("id").notNull().defaultRandom(),
+  org_id: uuid("org_id").notNull().unique(),
+  enabled: boolean("enabled").notNull().default(false),
+  destination: jsonb("destination").notNull().default({}),
+  secret_ciphertext: text("secret_ciphertext").notNull(),
+  created_at: ts("created_at").notNull().defaultNow(),
+  updated_at: ts("updated_at").notNull().defaultNow(),
 });
 
 export const user_notifications = pgTable("user_notifications", {

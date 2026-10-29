@@ -1,10 +1,9 @@
 import { Response } from "express";
 import { logger } from "../../lib/logger";
 import { getCrawl, getCrawlJobs, saveCrawl } from "../../lib/crawl-redis";
-import * as Sentry from "@sentry/node";
 import { configDotenv } from "dotenv";
 import { RequestWithAuth } from "./types";
-import { crawlGroup } from "../../services/worker/nuq";
+import { crawlGroup } from "../../services/worker/nuq-router";
 import { removeConcurrencyLimitedJobs } from "../../lib/concurrency-limit";
 configDotenv();
 
@@ -38,14 +37,17 @@ export async function crawlCancelController(
       logger.error(error);
     }
 
-    const jobIds = await getCrawlJobs(req.params.jobId);
-    await removeConcurrencyLimitedJobs(sc.team_id, jobIds);
+    if (sc.queueBackend === "fdb") {
+      await crawlGroup.cancelGroup(req.params.jobId);
+    } else {
+      const jobIds = await getCrawlJobs(req.params.jobId);
+      await removeConcurrencyLimitedJobs(sc.team_id, jobIds);
+    }
 
     res.json({
       status: "cancelled",
     });
   } catch (error) {
-    Sentry.captureException(error);
     logger.error(error);
     return res.status(500).json({ error: error.message });
   }
