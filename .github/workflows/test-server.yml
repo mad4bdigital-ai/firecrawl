@@ -34,7 +34,7 @@ jobs:
         # proxy: ["proxy", "no-proxy"]
         # search: ["searxng", "google"]
         # ai: ["openai", "no-ai"]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     services:
       redis:
         image: redis
@@ -540,7 +540,7 @@ jobs:
 
   nuq-fdb-core:
     name: NuQ FoundationDB core tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     services:
       redis:
         image: redis
