@@ -28,8 +28,9 @@ jobs:
           FIRECRAWL_PRODUCTION_HTPASSWD: /tmp/firecrawl-production-htpasswd
           FIRECRAWL_PRODUCTION_API_SHA: '1111111111111111111111111111111111111111'
         run: |
-          python3 -m py_compile scripts/ci/verify_production_compose.py ops/production/firecrawl-watch.py ops/production/auth-load-smoke.py
+          python3 -m py_compile scripts/ci/verify_production_compose.py ops/production/firecrawl-watch.py ops/production/auth-load-smoke.py ops/production/manage-consumer.py
           python3 ops/production/firecrawl-watch.py --self-test
+          python3 ops/production/manage-consumer.py self-test
           grep -Fq 'OnFailure=mad4b-alert-handler@%n.service' ops/production/mad4b-firecrawl-watch.service
           docker compose -f docker-compose.yaml -f ops/production/compose.override.yaml config --format json |
             python3 scripts/ci/verify_production_compose.py
