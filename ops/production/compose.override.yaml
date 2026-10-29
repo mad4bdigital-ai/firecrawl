@@ -111,6 +111,7 @@ services:
       - ${FIRECRAWL_PRODUCTION_HTPASSWD:?Provide production htpasswd file}:/etc/nginx/auth/.htpasswd:ro
     networks:
       - frontdoor
+      - consumers
     depends_on:
       api:
         condition: service_started
@@ -141,6 +142,11 @@ networks:
     internal: true
   egress:
     driver: bridge
+  # Client workloads join this internal network only after authorization.
+  # They never join frontdoor/backend and cannot reach the raw API directly.
+  consumers:
+    driver: bridge
+    internal: true
 
 volumes:
   nuq-data:

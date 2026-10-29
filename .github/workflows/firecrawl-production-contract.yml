@@ -28,7 +28,8 @@ jobs:
           FIRECRAWL_PRODUCTION_HTPASSWD: /tmp/firecrawl-production-htpasswd
           FIRECRAWL_PRODUCTION_API_SHA: '1111111111111111111111111111111111111111'
         run: |
-          python3 -m py_compile scripts/ci/verify_production_compose.py
+          python3 -m py_compile scripts/ci/verify_production_compose.py ops/production/firecrawl-watch.py ops/production/auth-load-smoke.py
+          python3 ops/production/firecrawl-watch.py --self-test
           docker compose -f docker-compose.yaml -f ops/production/compose.override.yaml config --format json |
             python3 scripts/ci/verify_production_compose.py
           grep -q 'auth_basic_user_file' ops/production/nginx.conf

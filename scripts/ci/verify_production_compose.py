@@ -29,7 +29,10 @@ gate((cfg.get("networks",{}).get("backend") or {}).get("internal"),"backend not 
 gate(not (cfg.get("networks",{}).get("frontdoor") or {}).get("internal"),"frontdoor must support loopback port forwarding")
 gate("frontdoor" in svc["api"].get("networks",{}),"API not connected to gateway")
 gate("frontdoor" in svc["gateway"].get("networks",{}),"gateway not connected to API")
-gate(set(svc["gateway"].get("networks",{}))=={"frontdoor"},"gateway has external access")
+gate(set(svc["gateway"].get("networks",{}))=={"frontdoor","consumers"},"gateway networks must be frontdoor and consumers only")
+gate(bool((cfg.get("networks",{}).get("consumers") or {}).get("internal")),"consumer network is not private")
+for name in ("api","playwright-service","nuq-postgres","redis","rabbitmq"):
+    gate("consumers" not in svc[name].get("networks",{}),"backend reachable from consumer network: "+name)
 gate("egress" not in svc["gateway"].get("networks",{}),"gateway egress enabled")
 gate(set(svc["gateway"].get("cap_add",[]))=={"CHOWN","SETGID","SETUID"},"gateway runtime caps drifted")
 gate("ALL" in svc["gateway"].get("cap_drop",[]),"gateway privileges not dropped")

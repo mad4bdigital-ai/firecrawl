@@ -1,0 +1,18 @@
+[Unit]
+Description=MAD4B Firecrawl isolated production watchdog
+Wants=network-online.target
+After=network-online.target docker.service
+ConditionPathExists=/opt/mad4b/firecrawl-production/source/ops/production/firecrawl-watch.py
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/mad4b/firecrawl-production/source/ops/production/firecrawl-watch.py
+TimeoutStartSec=35
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/mad4b-firecrawl-monitor
+UMask=0077
