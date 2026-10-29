@@ -16,6 +16,7 @@ UPSTREAM_WRITERS = {
     "deploy-redis.yml",
     "eval-prod.yml",
     "ghcr-clean.yml",
+    "scrape-evals.yml",
     "npm-audit-claude-remediation.yml",
     "publish-dotnet-sdk.yml",
     "publish-elixir-sdk.yml",
@@ -56,6 +57,19 @@ def validate():
             if GUARD not in expr:
                 failures.append(f"{name}/{job_name}: upstream repository guard missing")
             checked += 1
+
+    # External repository dispatch can mutate another GitHub repository even
+    # when the local workflow has permissions: {} (it may use a PAT secret).
+    # Do not permit new dispatch-bearing workflows to evade the explicit
+    # upstream-only guarded job allowlist.
+    for path in sorted(WORKFLOW_DIR.glob("*")):
+        if path.suffix not in (".yml", ".yaml"):
+            continue
+        source = path.read_text(encoding="utf-8")
+        if "createDispatchEvent(" in source and path.name not in UPSTREAM_WRITERS:
+            failures.append(
+                f"{path}: cross-repository dispatch requires guarded-job review"
+            )
 
     test_paths = list(WORKFLOW_DIR.glob("test-*")) + [WORKFLOW_DIR / "npm-audit.yml"]
     for path in test_paths:
