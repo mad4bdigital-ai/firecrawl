@@ -19,7 +19,7 @@ permissions: {}
 
 jobs:
   regenerate:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.repository == 'firecrawl/firecrawl' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: write
@@ -144,7 +144,7 @@ jobs:
             --base main
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.repository == 'firecrawl/firecrawl' && (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     environment: release
     permissions:

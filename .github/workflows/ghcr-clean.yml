@@ -7,6 +7,7 @@ permissions: {}
 
 jobs:
   delete-untagged-images:
+    if: github.repository == 'firecrawl/firecrawl'
     name: Delete Untagged Images
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
