@@ -31,7 +31,7 @@ gate("egress" not in svc["gateway"].get("networks",{}),"gateway egress enabled")
 p=svc["gateway"].get("ports",[])
 gate(len(p)==1,"gateway needs exactly one loopback bind")
 gate(p[0].get("host_ip") in ("127.0.0.1","::1"),"gateway not loopback")
-gate(p[0].get("published")==13082,"unexpected gateway host port")
+gate(str(p[0].get("published"))=="13082","unexpected gateway host port")
 for name in ("nuq-postgres","redis","rabbitmq"):
     gate("egress" not in svc[name].get("networks",{}),"stateful service egress "+name)
 for name in ("foundationdb","foundationdb-init"):
