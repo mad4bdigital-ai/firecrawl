@@ -12,6 +12,7 @@ permissions: {}
 
 jobs:
   build:
+    if: github.repository == 'firecrawl/firecrawl'
     name: Build
     runs-on: ubuntu-latest
     permissions:
@@ -61,7 +62,7 @@ jobs:
   publish:
     name: Publish
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'firecrawl/firecrawl' && (github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     environment: release
     permissions:

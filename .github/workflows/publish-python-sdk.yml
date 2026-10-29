@@ -11,6 +11,7 @@ permissions: {}
 
 jobs:
   build:
+    if: github.repository == 'firecrawl/firecrawl'
     name: Build
     runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
@@ -61,7 +62,7 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
-    if: needs.build.outputs.publish == 'true' && github.ref == 'refs/heads/main'
+    if: github.repository == 'firecrawl/firecrawl' && (needs.build.outputs.publish == 'true' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     environment: release
     permissions:
