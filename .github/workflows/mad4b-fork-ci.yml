@@ -97,6 +97,13 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: apps/api/pnpm-lock.yaml
+      - name: Install FoundationDB native client headers
+        env:
+          FDB_VERSION: "7.3.63"
+        run: |
+          curl -fsSL -o /tmp/fdb-clients.deb "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_amd64.deb"
+          sudo dpkg -i /tmp/fdb-clients.deb
+          test -f /usr/include/foundationdb/fdb_c.h
       - name: Install dependencies
         working-directory: apps/api
         env:
