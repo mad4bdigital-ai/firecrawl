@@ -26,6 +26,7 @@ jobs:
           FIRECRAWL_PRODUCTION_POSTGRES_PASSWORD: ci-unique-production-placeholder-not-real
           FIRECRAWL_PRODUCTION_NGINX_CONFIG: /tmp/firecrawl-production-nginx.conf
           FIRECRAWL_PRODUCTION_HTPASSWD: /tmp/firecrawl-production-htpasswd
+          FIRECRAWL_PRODUCTION_API_SHA: 1111111111111111111111111111111111111111
         run: |
           python3 -m py_compile scripts/ci/verify_production_compose.py
           docker compose -f docker-compose.yaml -f ops/production/compose.override.yaml config --format json |
